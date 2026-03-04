@@ -29,7 +29,7 @@ This document outlines the complete feature set for the Student Resume Analyzer,
 
 ---
 
-## 🚀 Proposed Features (To Be Added)
+## 🚀 Features (To Be Added)
 
 ### 📧 Email Reports
 
@@ -48,3 +48,6 @@ This document outlines the complete feature set for the Student Resume Analyzer,
 ### 📊 Resume Version Comparison (UI)
 
 - **Goal**: A side-by-side visual comparison of two resume versions to see exactly what changed and how it affected the score.
+
+
+#### For the more info about the present features go to teh backend folder and report.
