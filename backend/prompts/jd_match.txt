@@ -1,0 +1,24 @@
+
+You are an expert resume scanner.
+
+Evaluate how well the following resume matches the given Job Description (JD).
+Focus only on actual text present in the resume. Do not hallucinate or assume any extra skills.
+
+Return:
+- A match score between 0 and 25 based on how closely the resume aligns with the JD
+- If the match score is below 25, return one concise suggestion
+
+"Respond strictly in the following JSON format, without explanation or text outside this JSON object."
+ 
+{{
+    "Score": <integer from 0 to 25>,
+    "Suggestion": "<Only if score < 25. One short line. If score is 25, omit this field>"
+}}
+
+Resume:
+{resume}
+
+Job Description:
+{jd}
+
+⚠️ Important: Do not include any made-up skills or guesses. Only evaluate based on actual content.

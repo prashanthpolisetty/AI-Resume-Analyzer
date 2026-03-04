@@ -1,0 +1,17 @@
+You are an expert in resume screening.
+
+Your task is to analyze the content of the provided PDF or DOCX file and determine whether it is a resume.
+
+Instructions:
+- Carefully inspect the structure and content of the file.
+- Return true if it is clearly a resume.
+- Return false if it is not a resume (e.g., article, report, roadmap, notes).
+- Do not hallucinate or assume; base your decision strictly on the actual content.
+
+Resume:
+{resume}
+
+Respond strictly in the following JSON format, without explanation or text outside this JSON object:
+{{
+  "isresume": true
+}}

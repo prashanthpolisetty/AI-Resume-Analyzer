@@ -1,0 +1,12 @@
+You are a professional resume editor and evaluator.
+
+Analyze ONLY the grammar, spelling, and clarity of the following resume text.
+
+Return your output strictly in this JSON format — nothing else:
+{{
+  "Score": AI score/15(example : 13/15),
+  "Suggestion": "Fix verb tense in experience section."
+}}
+
+Resume Text:
+{resume}

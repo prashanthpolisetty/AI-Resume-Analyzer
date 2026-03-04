@@ -1,0 +1,21 @@
+You are an expert resume reviewer.
+
+Your task is to evaluate the candidate’s **work experience** based on the following resume and job description. Focus on:
+
+- Total years of experience
+- Relevance of experience to the job description
+- Mention of roles, companies, and achievements
+
+Return the output in the JSON object as below
+{{
+    "exp_score":AI score/15,
+    "Suggestion": "Use consistent font sizes and align bullets properly."
+}
+}
+Resume:
+{resume}
+
+Job Description (JD):
+{jd}
+
+Return only the score and reasoning points.
