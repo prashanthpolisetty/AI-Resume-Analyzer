@@ -1,47 +1,44 @@
+from __future__ import annotations
+
 import os
-import fitz  # PyMuPDF
-import docx  # python-docx
+from pathlib import Path
 
-def extract_text_from_pdf(file_path):
-    """Extract text from a PDF file using PyMuPDF."""
+import fitz
+from docx import Document
+
+
+def extract_text_from_pdf(file_path: str) -> str:
     try:
-        text = ""
-        with fitz.open(file_path) as doc:
-            for page in doc:
-                text += page.get_text()
-        return text.strip()
-    except Exception as e:
-        raise ValueError(f"Failed to extract PDF text: {e}")
+        with fitz.open(file_path) as document:
+            return "\n".join(page.get_text() for page in document).strip()
+    except Exception as exc:
+        raise ValueError(f"Failed to extract PDF text: {exc}") from exc
 
-def extract_text_from_docx(file_path):
-    """Extract text from a DOCX file using python-docx."""
+
+def extract_text_from_docx(file_path: str) -> str:
     try:
-        doc = docx.Document(file_path)
-        text = "\n".join([para.text for para in doc.paragraphs])
-        return text.strip()
-    except Exception as e:
-        raise ValueError(f"Failed to extract DOCX text: {e}")
+        document = Document(file_path)
+        paragraphs = [paragraph.text for paragraph in document.paragraphs]
+        for table in document.tables:
+            paragraphs.extend(cell.text for row in table.rows for cell in row.cells)
+        return "\n".join(paragraphs).strip()
+    except Exception as exc:
+        raise ValueError(f"Failed to extract DOCX text: {exc}") from exc
 
-def extract_text_from_txt(file_path):
-    """Extract text from a plain TXT file."""
+
+def extract_text_from_txt(file_path: str) -> str:
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception as e:
-        raise ValueError(f"Failed to extract TXT text: {e}")
+        return Path(file_path).read_text(encoding="utf-8", errors="replace").strip()
+    except Exception as exc:
+        raise ValueError(f"Failed to extract TXT text: {exc}") from exc
 
-def extract_resume_text(file_path):
-    """
-    Dispatches to the appropriate extractor based on file extension.
-    Supported: .pdf, .docx, .txt
-    """
-    ext = os.path.splitext(file_path)[1].lower()
-    
-    if ext == ".pdf":
+
+def extract_resume_text(file_path: str) -> str:
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension == ".pdf":
         return extract_text_from_pdf(file_path)
-    elif ext == ".docx":
+    if extension == ".docx":
         return extract_text_from_docx(file_path)
-    elif ext == ".txt":
+    if extension == ".txt":
         return extract_text_from_txt(file_path)
-    else:
-        raise ValueError("Unsupported file type. Only PDF, DOCX, and TXT are supported.")
+    raise ValueError("Unsupported file type. Only PDF, DOCX, and TXT are supported.")

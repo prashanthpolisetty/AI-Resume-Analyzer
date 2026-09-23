@@ -1,127 +1,143 @@
-from fastapi import FastAPI, UploadFile, Form, Request
-from fastapi.middleware.cors import CORSMiddleware
-from utils.file_loader import extract_resume_text
-from utils.chain_logger import run_chain_with_logging
+from __future__ import annotations
 
-# Import all chains
-from chains.jd_match_chain import run_jd_match_chain
-from chains.grammar_chain import run_grammar_chain
-from chains.keyword_chain import run_keyword_chain
-from chains.skill_gap_chain import run_skill_gap_chain
-from chains.final_score_chain import get_final_score_from_outputs
-from chains.suggestion_chain import run_suggestion_chain
-from chains.resume_check import run_resuem_Check_chain
-from chains.format_chain import run_format_chain
-from chains.chatBot import run_interview_chat
-
-import os
 import json
-import time
+import os
+import re
+import tempfile
+from pathlib import Path
 
-app = FastAPI()
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
 
-# Enable CORS for frontend communication
+from analyzer import analyze_resume, boost_project, buzzword_report, skill_proof
+from database import get_analysis, init_db, list_analyses, save_analysis, score_history
+from utils.file_loader import extract_resume_text
+
+app = FastAPI(title="Student Resume Analyzer", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all for dev; restrict in prod
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(","),
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-@app.post("/analyze")
-async def analyze_resume(resume_file: UploadFile, jd: str = Form(...)):
-    """
-    Accepts a resume file and job description input.
-    Runs all analysis chains and returns the ATS score with suggestions.
-    """
 
-    # STEP 1: Save uploaded file temporarily
-    temp_dir = "temp"
-    os.makedirs(temp_dir, exist_ok=True)
-    file_path = os.path.join(temp_dir, resume_file.filename)
+class ProjectRequest(BaseModel):
+    notes: str = Field(min_length=10, max_length=5000)
+    target_role: str | None = Field(default=None, max_length=120)
 
-    with open(file_path, "wb") as f:
-        f.write(await resume_file.read())
 
-    # STEP 2: Extract text from resume
-    resume_text = extract_resume_text(file_path)
+class SkillProofRequest(BaseModel):
+    skills: list[str] = Field(min_length=1, max_length=50)
+    resume_text: str = Field(min_length=20, max_length=100000)
 
-    # STEP 3: Resume validation chain
-    resume_check = run_chain_with_logging(run_resuem_Check_chain, resume_text, chain_name="Resume Check")
 
-    if isinstance(resume_check, dict):
-        if resume_check.get("isresume") is not True:
-            return "The uploaded document is not recognized as a resume."
-    else:
-        return "Resume Check failed. LLM did not return valid response."
-    
+class BuzzwordRequest(BaseModel):
+    resume_text: str = Field(min_length=20, max_length=100000)
+
+
+class ChatRequest(BaseModel):
+    resume: str = Field(min_length=20, max_length=100000)
+    job_description: str | None = Field(default=None, max_length=30000)
+    user_input: str = Field(min_length=1, max_length=2000)
+    chat_history: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+
+
+def _validate_email(email: str) -> str:
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=422, detail="A valid email address is required.")
+    return email.lower().strip()
+
+
+async def _read_resume(upload: UploadFile) -> tuple[str, str]:
+    suffix = Path(upload.filename or "resume.txt").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt"}:
+        raise HTTPException(status_code=415, detail="Only PDF, DOCX, and TXT resumes are supported.")
+    data = await upload.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Resume must be smaller than 10 MB.")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
+        temporary.write(data)
+        path = temporary.name
     try:
-        print("▶ Running JD Match Chain")
-        time.sleep(3)
-        jd_result = run_chain_with_logging(run_jd_match_chain, resume_text, jd, chain_name="JD Match Chain")
+        text = extract_resume_text(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        Path(path).unlink(missing_ok=True)
+    if len(text.strip()) < 30:
+        raise HTTPException(status_code=422, detail="We could not find enough readable text in that file.")
+    return text, Path(upload.filename or "resume").name
 
-        print("▶ Running Grammar Chain")
-        time.sleep(3)
-        grammar_result = run_chain_with_logging(run_grammar_chain, resume_text, chain_name="Grammar Chain")
 
-        print("▶ Running Keyword Density Chain")
-        time.sleep(3)
-        keyword_result = run_chain_with_logging(run_keyword_chain, resume_text, jd, chain_name="Keyword Density Chain")
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
 
-        print("▶ Running Skill Gap Chain")
-        time.sleep(3)
-        skill_result = run_chain_with_logging(run_skill_gap_chain, resume_text, jd, chain_name="Skill Gap Chain")
 
-        print("▶ Running Format Check Chain")
-        time.sleep(3)
-        format_result = run_chain_with_logging(run_format_chain, resume_text, chain_name="Format Check Chain")
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "service": "student-resume-analyzer"}
 
-        # STEP 4: Compute final ATS score
-        outputs = {
-            "jd_match": jd_result,
-            "grammar": grammar_result,
-            "keyword_density": keyword_result,
-            "skill_gap": skill_result,
-        }
-        score_data = get_final_score_from_outputs(outputs)
 
-        # STEP 5: Generate improvement suggestions
-        print("▶ Running Suggestion Chain")
-        time.sleep(3)
-        summary_for_suggestions = f"{jd_result}\n\n{grammar_result}\n\n{keyword_result}\n\n{skill_result}"
-        suggestions = run_chain_with_logging(run_suggestion_chain, resume_text, summary_for_suggestions, chain_name="Suggestion Chain")
+@app.post("/analyze")
+async def analyze(
+    resume_file: UploadFile = File(...),
+    email: EmailStr = Form(...),
+    jd: str = Form(default=""),
+    job_title: str = Form(default=""),
+) -> dict:
+    text, filename = await _read_resume(resume_file)
+    report = analyze_resume(text, jd or None, job_title or None)
+    report["filename"] = filename
+    report["email"] = str(email)
+    analysis_id = save_analysis(email=str(email), mode=report["mode"], filename=filename, job_title=job_title or None, score=report["score"], report_json=json.dumps(report))
+    report["analysis_id"] = analysis_id
+    return report
 
-        # STEP 6: Return response as a single string
-        suggestion_text = suggestions if isinstance(suggestions, str) else "\n".join(suggestions)
-        result_string = (
-            f"📄 Resume Analysis Report\n\n"
-            f"✔ Final Score: {score_data['final_score']}/100\n\n"
-            f"🔍 JD Match:\n{jd_result}\n\n"
-            f"📝 Grammar:\n{grammar_result}\n\n"
-            f"🔑 Keyword Density:\n{keyword_result}\n\n"
-            f"📉 Skill Gap:\n{skill_result}\n\n"
-            f"📐 Format Check:\n{format_result}\n\n"
-            f"💡 Suggestions:\n{suggestion_text}"
-        )
-        return result_string.strip()
 
-    except Exception as e:
-        return f"Resume analysis failed: {str(e)}"
+@app.post("/debug-text")
+async def debug_text(resume_file: UploadFile = File(...)) -> dict:
+    text, filename = await _read_resume(resume_file)
+    return {"filename": filename, "characters": len(text), "text": text}
+
+
+@app.post("/boost-project")
+def project_booster(request: ProjectRequest) -> dict:
+    return {"bullets": boost_project(request.notes, request.target_role)}
+
+
+@app.post("/validate-skills")
+def validate_skills(request: SkillProofRequest) -> dict:
+    return {"results": skill_proof(request.skills, request.resume_text)}
+
+
+@app.post("/check-buzzwords")
+def check_buzzwords(request: BuzzwordRequest) -> dict:
+    return {"matches": buzzword_report(request.resume_text)}
+
+
+@app.get("/history/{email}")
+def history(email: str) -> dict:
+    email = _validate_email(email)
+    return {"email": email, "analyses": list_analyses(email), "score_history": score_history(email)}
+
+
+@app.get("/history/{email}/{analysis_id}")
+def report_history(email: str, analysis_id: int) -> dict:
+    report = get_analysis(analysis_id, _validate_email(email))
+    if not report:
+        raise HTTPException(status_code=404, detail="Analysis not found.")
+    return report
+
 
 @app.post("/interview-chat")
-async def interview_chat(request: Request):
-    body = await request.json()
-    resume = body.get("resume")
-    jd = body.get("jd")
-    chat_history = body.get("chat_history", "")
-    user_input = body.get("user_input")
-
-    if not all([resume, jd, user_input]):
-        return "Missing input fields."
-
-    try:
-        response = run_interview_chat(resume, jd, chat_history, user_input)
-        return response
-    except Exception as e:
-        return f"Interview chat failed: {str(e)}"
+def interview_chat(request: ChatRequest) -> dict:
+    focus = "the target role" if request.job_description else "your resume"
+    previous = len(request.chat_history)
+    question = (
+        f"Based on {focus}, tell me about a project where you used one of these skills: "
+        f"{', '.join(analyze_resume(request.resume).get('strengths', [])[:4]) or 'a key skill'}.")
+    if previous:
+        question = "Thanks. Can you quantify the result of that work and explain what you personally owned?"
+    return {"message": question, "question_number": previous + 1, "suggested_follow_up": "Use the STAR structure: situation, task, action, result."}
